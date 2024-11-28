@@ -220,22 +220,22 @@ TEST_CASE("interpreter tests")
                         scope = Scope::Relative;
                     }
 
-                    inputPath = dataPath_{scope, {dataNode_{{"mod"}, leaf_{"myLeaf"}}}};
+                    inputPath = dataPath_{scope, {dataNode_{module_{"mod"}, leaf_{"myLeaf"}}}};
                 }
 
                 SECTION("cwd: /mod:whatever")
                 {
-                    parser.changeNode(dataPath_{Scope::Relative, {dataNode_{{"mod"}, container_{"whatever"}}}});
+                    parser.changeNode(dataPath_{Scope::Relative, {dataNode_{module_{"mod"}, container_{"whatever"}}}});
                     SECTION("absolute")
                     {
                         scope = Scope::Absolute;
-                        inputPath = dataPath_{scope, {dataNode_{{"mod"}, leaf_{"myLeaf"}}}};
+                        inputPath = dataPath_{scope, {dataNode_{module_{"mod"}, leaf_{"myLeaf"}}}};
                     }
 
                     SECTION("relative")
                     {
                         scope = Scope::Relative;
-                        inputPath = dataPath_{scope, {dataNode_{nodeup_{}}, dataNode_{{"mod"}, leaf_{"myLeaf"}}}};
+                        inputPath = dataPath_{scope, {dataNode_{nodeup_{}}, dataNode_{module_{"mod"}, leaf_{"myLeaf"}}}};
                     }
                 }
             }
@@ -256,22 +256,22 @@ TEST_CASE("interpreter tests")
                         scope = Scope::Relative;
                     }
 
-                    inputPath = dataPath_{scope, {dataNode_{{"mod"}, listElement_{"myList", {{"name", "AHOJ"s}}}}}};
+                    inputPath = dataPath_{scope, {dataNode_{module_{"mod"}, listElement_{"myList", {{"name", "AHOJ"s}}}}}};
                 }
 
                 SECTION("cwd: /mod:whatever")
                 {
-                    parser.changeNode(dataPath_{Scope::Relative, {dataNode_{{"mod"}, container_{"whatever"}}}});
+                    parser.changeNode(dataPath_{Scope::Relative, {dataNode_{module_{"mod"}, container_{"whatever"}}}});
                     SECTION("absolute")
                     {
                         scope = Scope::Absolute;
-                        inputPath = dataPath_{scope, {dataNode_{{"mod"}, listElement_{"myList", {{"name", "AHOJ"s}}}}}};
+                        inputPath = dataPath_{scope, {dataNode_{module_{"mod"}, listElement_{"myList", {{"name", "AHOJ"s}}}}}};
                     }
 
                     SECTION("relative")
                     {
                         scope = Scope::Relative;
-                        inputPath = dataPath_{scope, {dataNode_{nodeup_{}}, dataNode_{{"mod"}, listElement_{"myList", {{"name", "AHOJ"s}}}}}};
+                        inputPath = dataPath_{scope, {dataNode_{nodeup_{}}, dataNode_{module_{"mod"}, listElement_{"myList", {{"name", "AHOJ"s}}}}}};
                     }
                 }
             }
@@ -339,21 +339,21 @@ TEST_CASE("interpreter tests")
 
         SECTION("list instance")
         {
-            inputPath.m_nodes = {dataNode_{{"mod"}, listElement_{"department", {{"name", "engineering"s}}}}};
+            inputPath.m_nodes = {dataNode_{module_{"mod"}, listElement_{"department", {{"name", "engineering"s}}}}};
             expectations.emplace_back(NAMED_REQUIRE_CALL(*datastore, createItem("/mod:department[name='engineering']")));
             expectations.emplace_back(NAMED_REQUIRE_CALL(*datastore, deleteItem("/mod:department[name='engineering']")));
         }
 
         SECTION("leaflist instance")
         {
-            inputPath.m_nodes = {dataNode_{{"mod"}, leafListElement_{"addresses", "127.0.0.1"s}}};
+            inputPath.m_nodes = {dataNode_{module_{"mod"}, leafListElement_{"addresses", "127.0.0.1"s}}};
             expectations.emplace_back(NAMED_REQUIRE_CALL(*datastore, createItem("/mod:addresses[.='127.0.0.1']")));
             expectations.emplace_back(NAMED_REQUIRE_CALL(*datastore, deleteItem("/mod:addresses[.='127.0.0.1']")));
         }
 
         SECTION("presence container")
         {
-            inputPath.m_nodes = {dataNode_{{"mod"}, container_{"pContainer"}}};
+            inputPath.m_nodes = {dataNode_{module_{"mod"}, container_{"pContainer"}}};
             expectations.emplace_back(NAMED_REQUIRE_CALL(*datastore, createItem("/mod:pContainer")));
             expectations.emplace_back(NAMED_REQUIRE_CALL(*datastore, deleteItem("/mod:pContainer")));
         }
@@ -370,7 +370,7 @@ TEST_CASE("interpreter tests")
     {
         expectations.emplace_back(NAMED_REQUIRE_CALL(*datastore, deleteItem("/mod:someLeaf")));
         delete_ deleteCmd;
-        deleteCmd.m_path = {Scope::Absolute, {dataNode_{{"mod"}, leaf_{"someLeaf"}}, }};
+        deleteCmd.m_path = {Scope::Absolute, {dataNode_{module_{"mod"}, leaf_{"someLeaf"}}, }};
         toInterpret.emplace_back(deleteCmd);
     }
 
@@ -394,7 +394,7 @@ TEST_CASE("interpreter tests")
 
         SECTION("setting identityRef without module") // The parser has to fill in the module
         {
-            inputPath.m_nodes = {dataNode_{{"mod"}, leaf_{"animal"}}};
+            inputPath.m_nodes = {dataNode_{module_{"mod"}, leaf_{"animal"}}};
             inputData = identityRef_{"Doge"};
             expectations.emplace_back(NAMED_REQUIRE_CALL(*datastore, setLeaf("/mod:animal", identityRef_{"mod", "Doge"})));
         }
@@ -441,7 +441,7 @@ TEST_CASE("rpc")
     SECTION("entering/leaving rpc context")
     {
         dataPath_ rpcPath;
-        rpcPath.pushFragment({{"example"}, rpcNode_{"launch-nukes"}});
+        rpcPath.pushFragment({module_{"example"}, rpcNode_{"launch-nukes"}});
         prepare_ prepareCmd;
         prepareCmd.m_path = rpcPath;
 
@@ -452,25 +452,127 @@ TEST_CASE("rpc")
 
         REQUIRE(parser.currentPath() == rpcPath);
 
-        SECTION("can't leave the context with cd")
+        dataPath_ inRpcContainer = dataPath_{Scope::Relative, {dataNode_{container_{"payload"}}}};
+        dataPath_ inRpcLeaf = dataPath_{Scope::Relative, {dataNode_{leaf_{"description"}}}};
+        dataPath_ outRpcPath = dataPath_{Scope::Absolute, {dataNode_{nodeup_{}}, dataNode_{module_("example"), container_{"somewhere-else"}}}};
+
+        std::string inRpcContainerString = "/example:launch-nukes/payload";
+        std::string inRpcLeafString = "/example:launch-nukes/description";
+
+        SECTION("valid commands")
         {
-            REQUIRE_THROWS(boost::apply_visitor(Interpreter(parser, proxyDatastore), command_{cd_{{}, dataPath_{Scope::Absolute, {dataNode_{module_{{"example"}}, container_{"somewhereElse"}}}}}}));
-            REQUIRE_THROWS(boost::apply_visitor(Interpreter(parser, proxyDatastore), command_{cd_{{}, dataPath_{Scope::Relative, {dataNode_{nodeup_{}}}}}}));
-            boost::apply_visitor(Interpreter(parser, proxyDatastore), command_{cancel_{}});
+            command_ command;
+            std::vector<std::unique_ptr<trompeloeil::expectation>> expectations;
+
+            SECTION("create inside context")
+            {
+                expectations.emplace_back(NAMED_REQUIRE_CALL(*input_datastore, createItem(inRpcContainerString)));
+                command = create_{{}, inRpcContainer};
+            }
+
+            SECTION("set inside context")
+            {
+                leaf_data_ leafData = std::string{"Nuke the whales"};
+                expectations.emplace_back(NAMED_REQUIRE_CALL(*input_datastore, setLeaf(inRpcLeafString, leafData)));
+                command = set_{{}, inRpcLeaf, leafData};
+            }
+
+            SECTION("delete inside context")
+            {
+                expectations.emplace_back(NAMED_REQUIRE_CALL(*input_datastore, deleteItem(inRpcContainerString)));
+                command = delete_{{}, inRpcContainer};
+            }
+
+            SECTION("cd inside context")
+            {
+                command = cd_{{}, inRpcContainer};
+            }
+
+            SECTION("move inside context")
+            {
+                expectations.emplace_back(NAMED_REQUIRE_CALL(*datastore, moveItem("description", yang::move::Absolute::Begin)));
+                command = move_{{}, inRpcLeaf, yang::move::Absolute::Begin};
+            }
+
+            SECTION("cancel")
+            {
+                command = cancel_{};
+            }
+
+            SECTION("exec")
+            {
+                expectations.emplace_back(NAMED_REQUIRE_CALL(*input_datastore, getItems("/")).RETURN(DatastoreAccess::Tree{}));
+                expectations.emplace_back(NAMED_REQUIRE_CALL(*datastore, execute("/example:launch-nukes", DatastoreAccess::Tree{})).RETURN(DatastoreAccess::Tree{}));
+                command = exec_{};
+            }
+
+            boost::apply_visitor(Interpreter(parser, proxyDatastore), command);
+
+            boost::apply_visitor([&](auto& cmd) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(cmd)>, exec_>) {
+                    REQUIRE(parser.currentPath() == dataPath_{});
+                } else if constexpr (std::is_same_v<std::decay_t<decltype(cmd)>, cancel_>) {
+                    REQUIRE(parser.currentPath() == dataPath_{});
+                }
+            }, command);
+
         }
 
-        SECTION("exec")
+        SECTION("invalid commands")
         {
-            REQUIRE_CALL(*input_datastore, getItems("/")).RETURN(DatastoreAccess::Tree{});
-            REQUIRE_CALL(*datastore, execute("/example:launch-nukes", DatastoreAccess::Tree{})).RETURN(DatastoreAccess::Tree{});
-            boost::apply_visitor(Interpreter(parser, proxyDatastore), command_{exec_{}});
-        }
+            command_ command;
 
-        SECTION("cancel")
-        {
-            boost::apply_visitor(Interpreter(parser, proxyDatastore), command_{cancel_{}});
-        }
+            SECTION("block commit entirely")
+            {
+                command = commit_{};
+            }
 
-        REQUIRE(parser.currentPath() == dataPath_{});
+            SECTION("block discard entirely")
+            {
+                command = discard_{};
+            }
+
+            SECTION("block copy entirely")
+            {
+                command = copy_{{}, Datastore::Running, Datastore::Startup};
+            }
+
+            SECTION("block switch entirely")
+            {
+                command = switch_{{}, DatastoreTarget::Running};
+            }
+
+            SECTION("block prepare entirely")
+            {
+                command = prepare_{{}, outRpcPath};
+            }
+
+            SECTION("block create outside RPC context")
+            {
+                command = create_{{}, outRpcPath};
+            }
+
+            SECTION("block set outside RPC context")
+            {
+                command = set_{{}, outRpcPath, std::string{"Nuke the whales"}};
+            }
+
+            SECTION("block delete outside RPC context")
+            {
+                command = delete_{{}, outRpcPath};
+            }
+
+            SECTION("block cd outside RPC context")
+            {
+                command = cd_{{}, outRpcPath};
+            }
+
+            SECTION("block move outside RPC context")
+            {
+                command = move_{{}, outRpcPath, yang::move::Absolute::Begin};
+            }
+
+            REQUIRE_THROWS(boost::apply_visitor(Interpreter(parser, proxyDatastore), command));
+        }
     }
 }

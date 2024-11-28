@@ -14,6 +14,8 @@
 #include "pretty_printers.hpp"
 #include "utils.hpp"
 
+using namespace std::literals;
+
 TEST_CASE("utils")
 {
     SECTION("filterByPrefix")
@@ -215,8 +217,18 @@ module test-schema {
             }
         }
     }
+
+    leaf iid-valid {
+        type instance-identifier;
+    }
+
+    leaf iid-relaxed {
+        type instance-identifier {
+            require-instance false;
+        }
+    }
 }
-)";
+)"s;
 
 const auto data = R"(
 {
@@ -255,16 +267,18 @@ const auto data = R"(
                 "name": "Aneta"
             }
         ]
-    }
+    },
+    "test-schema:iid-valid": "/test-schema:stuff[name='Xaver']/name",
+    "test-schema:iid-relaxed": "/test-schema:stuff[name='XXX']/name"
 }
-)";
+)"s;
 
 
 TEST_CASE("libyang_utils")
 {
     libyang::Context ctx;
-    ctx.parseModuleMem(schema, libyang::SchemaFormat::YANG);
-    auto dataNode = ctx.parseDataMem(data, libyang::DataFormat::JSON, std::nullopt, libyang::ValidationOptions::Present);
+    ctx.parseModule(schema, libyang::SchemaFormat::YANG);
+    auto dataNode = ctx.parseData(data, libyang::DataFormat::JSON, std::nullopt, libyang::ValidationOptions::Present);
 
     SECTION("leafValueFromNode")
     {
@@ -390,6 +404,8 @@ TEST_CASE("libyang_utils")
             {"/test-schema:users/userList[2]/name", std::string{"Aneta"}},
             {"/test-schema:users/userList[3]", special_{SpecialValue::List}},
             {"/test-schema:users/userList[3]/name", std::string{"Aneta"}},
+            {"/test-schema:iid-valid", instanceIdentifier_{"/test-schema:stuff[name='Xaver']/name"}},
+            {"/test-schema:iid-relaxed", instanceIdentifier_{"/test-schema:stuff[name='XXX']/name"}},
         };
 
         DatastoreAccess::Tree tree;

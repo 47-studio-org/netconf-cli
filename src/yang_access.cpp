@@ -16,7 +16,7 @@ using DatastoreType = std::optional<libyang::DataNode>;
 }
 
 YangAccess::YangAccess()
-    : m_ctx(std::nullopt, libyang::ContextOptions::DisableSearchCwd | libyang::ContextOptions::SetPrivParsed)
+    : m_ctx(std::nullopt, libyang::ContextOptions::DisableSearchCwd | libyang::ContextOptions::SetPrivParsed | libyang::ContextOptions::NoYangLibrary)
     , m_datastore(std::nullopt)
     , m_schema(std::make_shared<YangSchema>(m_ctx))
 {
@@ -36,7 +36,7 @@ YangAccess::~YangAccess() = default;
     std::vector<DatastoreError> errorsRes;
 
     for (const auto& err : m_ctx.getErrors()) {
-        errorsRes.emplace_back(err.message, err.path);
+        errorsRes.emplace_back(err.message, err.dataPath ? err.dataPath : err.schemaPath ? err.schemaPath : std::nullopt);
     }
     throw DatastoreException(errorsRes);
 }
@@ -241,11 +241,11 @@ std::vector<ListInstance> YangAccess::listInstances(const std::string& path)
     auto instances = m_datastore->findXPath(path);
     for (const auto& list : instances) {
         ListInstance instance;
-        for (const auto& child : list.child()->siblings()) {
+        for (const auto& child : list.immediateChildren()) {
             if (child.schema().nodeType() == libyang::NodeType::Leaf) {
                 auto leafSchema(child.schema().asLeaf());
                 if (leafSchema.isKey()) {
-                    instance.insert({std::string{leafSchema.name()}, leafValueFromNode(child.asTerm())});
+                    instance.insert({leafSchema.name(), leafValueFromNode(child.asTerm())});
                 }
             }
         }
@@ -265,7 +265,7 @@ std::string YangAccess::dump(const DataFormat format) const
         return "";
     }
 
-    return std::string{*str};
+    return *str;
 }
 
 void YangAccess::loadModule(const std::string& name)
@@ -273,14 +273,14 @@ void YangAccess::loadModule(const std::string& name)
     m_schema->loadModule(name);
 }
 
-void YangAccess::addSchemaFile(const std::string& path)
+void YangAccess::addSchemaFile(const std::filesystem::path& path)
 {
-    m_schema->addSchemaFile(path.c_str());
+    m_schema->addSchemaFile(path);
 }
 
-void YangAccess::addSchemaDir(const std::string& path)
+void YangAccess::addSchemaDir(const std::filesystem::path& path)
 {
-    m_schema->addSchemaDirectory(path.c_str());
+    m_schema->addSchemaDirectory(path);
 }
 
 void YangAccess::setEnabledFeatures(const std::string& module, const std::vector<std::string>& features)
@@ -296,8 +296,8 @@ void YangAccess::addDataFile(const std::string& path, const StrictDataParsing st
 
     std::cout << "Parsing \"" << path << "\" as " << (firstChar == '{' ? "JSON" : "XML") << "...\n";
 
-    auto dataNode = m_ctx.parseDataPath(
-            path,
+    auto dataNode = m_ctx.parseData(
+            std::filesystem::path{path},
             firstChar == '{' ? libyang::DataFormat::JSON : libyang::DataFormat::XML,
             strict == StrictDataParsing::Yes ? std::optional{libyang::ParseOptions::Strict} : std::nullopt,
             libyang::ValidationOptions::Present);

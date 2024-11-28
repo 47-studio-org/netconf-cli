@@ -58,16 +58,8 @@ DatastoreAccess::Tree NetconfAccess::getItems(const std::string& path) const
     return res;
 }
 
-NetconfAccess::NetconfAccess(const std::string& hostname, uint16_t port, const std::string& user, const std::string& pubKey, const std::string& privKey)
-    : m_context(std::nullopt, libyang::ContextOptions::SetPrivParsed)
-    , m_session(libnetconf::client::Session::connectPubkey(hostname, port, user, pubKey, privKey, m_context))
-    , m_schema(std::make_shared<YangSchema>(m_context))
-{
-    checkNMDA();
-}
-
 NetconfAccess::NetconfAccess(const int source, const int sink)
-    : m_context(std::nullopt, libyang::ContextOptions::SetPrivParsed)
+    : m_context(std::nullopt, libyang::ContextOptions::SetPrivParsed | libyang::ContextOptions::DisableSearchCwd)
     , m_session(libnetconf::client::Session::connectFd(source, sink, m_context))
     , m_schema(std::make_shared<YangSchema>(m_context))
 {
@@ -82,7 +74,7 @@ NetconfAccess::NetconfAccess(std::unique_ptr<libnetconf::client::Session>&& sess
 }
 
 NetconfAccess::NetconfAccess(const std::string& socketPath)
-    : m_context(std::nullopt, libyang::ContextOptions::SetPrivParsed)
+    : m_context(std::nullopt, libyang::ContextOptions::SetPrivParsed | libyang::ContextOptions::DisableSearchCwd)
     , m_session(libnetconf::client::Session::connectSocket(socketPath, m_context))
     , m_schema(std::make_shared<YangSchema>(m_context))
 {
@@ -102,7 +94,7 @@ void NetconfAccess::setNcLogLevel(libnetconf::LogLevel level)
 
 void NetconfAccess::setNcLogCallback(const LogCb& callback)
 {
-    libnetconf::client::setLogCallback(callback);
+    libnetconf::client::setLogCallback([=](const auto, const auto level, const auto message) { callback(level, message); });
 }
 
 void NetconfAccess::setLeaf(const std::string& path, leaf_data_ value)
@@ -160,7 +152,7 @@ void NetconfAccess::moveItem(const std::string& source, std::variant<yang::move:
         if (m_schema->nodeType(source) == yang::NodeTypes::LeafList) {
             sourceNode.newMeta(yangModule, "value", leafDataToString(relative.m_path.at(".")));
         } else {
-            sourceNode.newMeta(yangModule, "key", instanceToString(relative.m_path, std::string{nodes.createdNode->schema().module().name()}));
+            sourceNode.newMeta(yangModule, "key", instanceToString(relative.m_path, nodes.createdNode->schema().module().name()));
         }
     }
     doEditFromDataNode(sourceNode);
@@ -170,14 +162,14 @@ void NetconfAccess::doEditFromDataNode(libyang::DataNode dataNode)
 {
     auto data = dataNode.printStr(libyang::DataFormat::XML, libyang::PrintFlags::WithSiblings);
     if (m_serverHasNMDA) {
-        m_session->editData(targetToDs_set(m_target), std::string{*data});
+        m_session->editData(targetToDs_set(m_target), *data);
     } else {
         m_session->editConfig(
                 libnetconf::Datastore::Candidate,
                 libnetconf::EditDefaultOp::Merge,
                 libnetconf::EditTestOpt::TestSet,
                 libnetconf::EditErrorOpt::Stop,
-                std::string{*data});
+                *data);
     }
 }
 
@@ -196,7 +188,7 @@ DatastoreAccess::Tree NetconfAccess::execute(const std::string& path, const Tree
     auto inputNode = treeToRpcInput(m_session->libyangContext(), path, input);
     auto data = inputNode.printStr(libyang::DataFormat::XML, libyang::PrintFlags::WithSiblings);
 
-    auto output = m_session->rpc_or_action(std::string{*data});
+    auto output = m_session->rpc_or_action(*data);
     if (!output) {
         return {};
     }
@@ -240,7 +232,7 @@ std::vector<ListInstance> NetconfAccess::listInstances(const std::string& path)
 
     // Have to use `newParent` in case our wanted list is a nested list. With `newNode` I would only send the inner
     // nested list and not the whole tree.
-    auto instances = m_session->get(std::string{*nodes.createdParent->printStr(libyang::DataFormat::XML, libyang::PrintFlags::WithSiblings)});
+    auto instances = m_session->get(nodes.createdParent->printStr(libyang::DataFormat::XML, libyang::PrintFlags::WithSiblings));
 
     if (!instances) {
         return res;
@@ -249,7 +241,7 @@ std::vector<ListInstance> NetconfAccess::listInstances(const std::string& path)
     for (const auto& instance : instances->findXPath(path)) {
         ListInstance instanceRes;
 
-        for (const auto& keyLeaf : instance.child()->siblings()) {
+        for (const auto& keyLeaf : instance.immediateChildren()) {
             // FIXME: even though we specified we only want the key leafs, Netopeer disregards that and sends more data,
             // even lists and other stuff. We only want keys, so filter out non-leafs and non-keys
             // https://github.com/CESNET/netopeer2/issues/825
@@ -261,7 +253,7 @@ std::vector<ListInstance> NetconfAccess::listInstances(const std::string& path)
             }
 
             auto leafData = keyLeaf.asTerm();
-            instanceRes.insert({std::string{leafData.schema().name()}, leafValueFromNode(leafData)});
+            instanceRes.insert({leafData.schema().name(), leafValueFromNode(leafData)});
         }
         res.emplace_back(instanceRes);
     }
@@ -280,5 +272,5 @@ std::string NetconfAccess::dump(const DataFormat format) const
         return "";
     }
 
-    return std::string{*str};
+    return *str;
 }

@@ -6,9 +6,9 @@
  *
 */
 
+#include <algorithm>
 #include <libyang-cpp/Enum.hpp>
 #include <libyang-cpp/Utils.hpp>
-#include <string_view>
 #include "UniqueResource.hpp"
 #include "utils.hpp"
 #include "yang_schema.hpp"
@@ -45,17 +45,17 @@ YangSchema::~YangSchema() = default;
 
 void YangSchema::addSchemaString(const char* schema)
 {
-    m_context.parseModuleMem(schema, libyang::SchemaFormat::YANG);
+    m_context.parseModule(std::string{schema}, libyang::SchemaFormat::YANG);
 }
 
-void YangSchema::addSchemaDirectory(const char* directoryName)
+void YangSchema::addSchemaDirectory(const std::filesystem::path& directory)
 {
-    m_context.setSearchDir(directoryName);
+    m_context.setSearchDir(directory);
 }
 
-void YangSchema::addSchemaFile(const char* filename)
+void YangSchema::addSchemaFile(const std::filesystem::path& filename)
 {
-    m_context.parseModulePath(filename, libyang::SchemaFormat::YANG);
+    m_context.parseModule(filename, libyang::SchemaFormat::YANG);
 }
 
 bool YangSchema::isModule(const std::string& name) const
@@ -93,7 +93,7 @@ std::optional<libyang::SchemaNode> YangSchema::impl_getSchemaNode(const std::str
         }
     }
     try {
-        return m_context.findPath(node, libyang::OutputNodes::Yes);
+        return m_context.findPath(node, libyang::InputOutputNodes::Output);
     } catch (libyang::ErrorWithCode& err) {
         if (err.code() != libyang::ErrorCode::ValidationFailure) {
             throw;
@@ -133,19 +133,19 @@ const std::set<std::string> YangSchema::listKeys(const schemaPath_& listPath) co
     std::set<std::string> keys;
     auto keysVec = node->asList().keys();
 
-    std::transform(keysVec.begin(), keysVec.end(), std::inserter(keys, keys.begin()), [](const auto& it) { return std::string{it.name()}; });
+    std::transform(keysVec.begin(), keysVec.end(), std::inserter(keys, keys.begin()), [](const auto& it) { return it.name(); });
     return keys;
 }
 
-std::set<enum_> enumValues(const libyang::Type& type)
+std::set<enum_> enumValues(const libyang::types::Type& type)
 {
     auto enums = type.asEnum().items();
     std::set<enum_> enumSet;
-    std::transform(enums.begin(), enums.end(), std::inserter(enumSet, enumSet.end()), [](auto it) { return enum_{std::string{it.name}}; });
+    std::transform(enums.begin(), enums.end(), std::inserter(enumSet, enumSet.end()), [](auto it) { return enum_{it.name}; });
     return enumSet;
 }
 
-std::set<identityRef_> validIdentities(const libyang::Type& type)
+std::set<identityRef_> validIdentities(const libyang::types::Type& type)
 {
     std::set<identityRef_> identSet;
 
@@ -155,7 +155,7 @@ std::set<identityRef_> validIdentities(const libyang::Type& type)
         }
 
         for (const auto& ident : idents) {
-            identSet.emplace(std::string{ident.module().name()}, std::string{ident.name()});
+            identSet.emplace(ident.module().name(), ident.name());
             impl(ident.derived());
         }
     };
@@ -167,9 +167,9 @@ std::set<identityRef_> validIdentities(const libyang::Type& type)
     return identSet;
 }
 
-std::string leafrefPath(const libyang::Type& type)
+std::string leafrefPath(const libyang::types::Type& type)
 {
-    return std::string{type.asLeafRef().path()};
+    return type.asLeafRef().path();
 }
 
 template <typename NodeType>
@@ -178,8 +178,8 @@ yang::TypeInfo YangSchema::impl_leafType(const NodeType& node) const
     using namespace std::string_literals;
     auto leaf = std::make_shared<NodeType>(node);
     auto leafUnits = leaf->units();
-    std::function<yang::TypeInfo(const libyang::Type&)> resolveType;
-    resolveType = [&resolveType, leaf, leafUnits](const libyang::Type& type) -> yang::TypeInfo {
+    std::function<yang::TypeInfo(const libyang::types::Type&)> resolveType;
+    resolveType = [&resolveType, leaf, leafUnits](const libyang::types::Type& type) -> yang::TypeInfo {
         yang::LeafDataType resType;
         switch (type.base()) {
         case libyang::LeafBaseType::String:
@@ -233,7 +233,7 @@ yang::TypeInfo YangSchema::impl_leafType(const NodeType& node) const
         case libyang::LeafBaseType::Bits: {
             auto resBits = yang::Bits{};
             for (const auto& bit : type.asBits().items()) {
-                resBits.m_allowedValues.emplace(std::string{bit.name});
+                resBits.m_allowedValues.emplace(bit.name);
             }
             resType.emplace<yang::Bits>(std::move(resBits));
             break;
@@ -246,14 +246,19 @@ yang::TypeInfo YangSchema::impl_leafType(const NodeType& node) const
             resType.emplace<yang::Union>(std::move(resUnion));
             break;
         }
+        case libyang::LeafBaseType::InstanceIdentifier: {
+            resType.emplace<yang::InstanceIdentifier>();
+            break;
+        }
         default:
             using namespace std::string_literals;
             throw UnsupportedYangTypeException("the type of "s +
-                    std::string{leaf->name()} +
+                    leaf->name() +
                     " is not supported: " +
                     std::to_string(std::underlying_type_t<libyang::LeafBaseType>(leaf->valueType().base())));
         }
-        std::optional<std::string_view> typeDesc;
+        // note https://gcc.gnu.org/bugzilla/show_bug.cgi?id=109434
+        std::optional<std::string> typeDesc;
 
         try {
             typeDesc = type.description();
@@ -261,7 +266,7 @@ yang::TypeInfo YangSchema::impl_leafType(const NodeType& node) const
             // libyang context doesn't have the parsed info.
         }
 
-        return yang::TypeInfo(resType, std::optional<std::string>{leafUnits}, std::optional<std::string>{typeDesc});
+        return yang::TypeInfo(resType, std::optional<std::string>{leafUnits}, typeDesc);
     };
     return resolveType(leaf->valueType());
 }
@@ -296,7 +301,7 @@ std::optional<std::string> YangSchema::leafTypeName(const std::string& path) con
 {
     auto leaf = getSchemaNode(path)->asLeaf();
     try {
-        return std::string{leaf.valueType().name()};
+        return leaf.valueType().name();
     } catch (libyang::ParsedInfoUnavailable&) {
         return std::nullopt;
     }
@@ -313,19 +318,18 @@ std::set<std::string> YangSchema::modules() const
     const auto& modules = m_context.modules();
 
     std::set<std::string> res;
-    std::transform(modules.begin(), modules.end(), std::inserter(res, res.end()), [](const auto module) { return std::string{module.name()}; });
+    std::transform(modules.begin(), modules.end(), std::inserter(res, res.end()), [](const auto module) { return module.name(); });
     return res;
 }
 
 std::set<ModuleNodePair> YangSchema::availableNodes(const boost::variant<dataPath_, schemaPath_, module_>& path, const Recursion recursion) const
 {
-    using namespace std::string_view_literals;
     std::set<ModuleNodePair> res;
     std::vector<libyang::ChildInstanstiables> nodeCollections;
     std::string topLevelModule;
 
     if (path.type() == typeid(module_)) {
-        nodeCollections.emplace_back(m_context.getModule(boost::get<module_>(path).m_name)->childInstantiables());
+        nodeCollections.emplace_back(m_context.getModuleLatest(boost::get<module_>(path).m_name)->childInstantiables());
     } else {
         auto schemaPath = anyPathToSchemaPath(path);
         if (schemaPath.m_nodes.empty()) {
@@ -344,11 +348,11 @@ std::set<ModuleNodePair> YangSchema::availableNodes(const boost::variant<dataPat
 
     for (const auto& coll : nodeCollections) {
         for (const auto& node : coll) {
-            if (node.module().name() == "ietf-yang-library"sv) {
+            if (node.module().name() == "ietf-yang-library") {
                 continue;
             }
 
-            if (node.module().name() == "ietf-yang-schema-mount"sv) {
+            if (node.module().name() == "ietf-yang-schema-mount") {
                 continue;
             }
 
@@ -359,7 +363,7 @@ std::set<ModuleNodePair> YangSchema::availableNodes(const boost::variant<dataPat
             } else {
                 ModuleNodePair toInsert;
                 if (topLevelModule.empty() || topLevelModule != node.module().name()) {
-                    toInsert.first = std::string{node.module().name()};
+                    toInsert.first = node.module().name();
                 }
                 toInsert.second = node.name();
                 res.insert(toInsert);
@@ -389,7 +393,7 @@ void YangSchema::setEnabledFeatures(const std::string& moduleName, const std::ve
     }
 }
 
-void YangSchema::registerModuleCallback(const std::function<std::string(const std::string_view, const std::optional<std::string_view>, const std::optional<std::string_view>, const std::optional<std::string_view>)>& clb)
+void YangSchema::registerModuleCallback(const std::function<std::string(const std::string&, const std::optional<std::string>&, const std::optional<std::string>&, const std::optional<std::string>&)>& clb)
 {
     auto lambda = [clb](const auto mod_name, const auto mod_revision, const auto submod_name, const auto submod_revision) -> std::optional<libyang::ModuleInfo> {
         (void)submod_revision;
@@ -523,5 +527,5 @@ std::optional<std::string> YangSchema::defaultValue(const std::string& leafPath)
 
 std::string YangSchema::dataPathToSchemaPath(const std::string& path)
 {
-    return std::string{getSchemaNode(path)->path()};
+    return getSchemaNode(path)->path();
 }

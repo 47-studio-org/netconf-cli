@@ -6,6 +6,7 @@
  *
 */
 
+#include <algorithm>
 #include <experimental/iterator>
 #include <sstream>
 #include "ast_path.hpp"
@@ -267,7 +268,7 @@ std::string pathToDataString(const dataPath_& path, Prefixes prefixes)
         if (it.m_prefix) {
             res = joinPaths(res, it.m_prefix.value().m_name + ":" + std::visit(nodeToDataStringVisitor(), it.m_suffix));
         } else {
-            res = joinPaths(res, (prefixes == Prefixes::Always ? path.m_nodes.at(0).m_prefix.value().m_name + ":" : "") + std::visit(nodeToDataStringVisitor(), it.m_suffix));
+            res = joinPaths(res, (prefixes == Prefixes::Always && path.m_nodes.at(0).m_prefix ? path.m_nodes.at(0).m_prefix.value().m_name + ":" : "") + std::visit(nodeToDataStringVisitor(), it.m_suffix));
         }
     }
 
@@ -285,7 +286,7 @@ std::string pathToSchemaString(const schemaPath_& path, Prefixes prefixes)
         if (it.m_prefix) {
             res = joinPaths(res, it.m_prefix.value().m_name + ":" + std::visit(nodeToSchemaStringVisitor(), it.m_suffix));
         } else {
-            res = joinPaths(res, (prefixes == Prefixes::Always ? path.m_nodes.at(0).m_prefix.value().m_name + ":" : "") + std::visit(nodeToSchemaStringVisitor(), it.m_suffix));
+            res = joinPaths(res, (prefixes == Prefixes::Always && path.m_nodes.at(0).m_prefix ? path.m_nodes.at(0).m_prefix.value().m_name + ":" : "") + std::visit(nodeToSchemaStringVisitor(), it.m_suffix));
         }
     }
     return res;
@@ -358,4 +359,17 @@ void dataPath_::pushFragment(const dataNode_& fragment)
 {
     impl_pushFragment(m_nodes, fragment);
     validatePathNodes(m_nodes);
+}
+
+dataPath_ realPath(const dataPath_& cwd, const dataPath_& newPath)
+{
+    if (newPath.m_scope == Scope::Absolute) {
+        return newPath;
+    }
+
+    dataPath_ res = cwd;
+    for (const auto& it : newPath.m_nodes) {
+        res.pushFragment(it);
+    }
+    return res;
 }

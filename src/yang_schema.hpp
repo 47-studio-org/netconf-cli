@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <libyang-cpp/Context.hpp>
 #include <optional>
@@ -42,7 +43,7 @@ public:
     [[nodiscard]] yang::Status status(const std::string& location) const override;
     [[nodiscard]] bool hasInputNodes(const std::string& path) const override;
 
-    void registerModuleCallback(const std::function<std::string(const std::string_view, const std::optional<std::string_view>, const std::optional<std::string_view>, const std::optional<std::string_view>)>& clb);
+    void registerModuleCallback(const std::function<std::string(const std::string&, const std::optional<std::string>&, const std::optional<std::string>&, const std::optional<std::string>&)>& clb);
 
     /** @short Loads a module called moduleName. */
     void loadModule(const std::string& moduleName);
@@ -54,10 +55,10 @@ public:
     void addSchemaString(const char* schema);
 
     /** @short Adds a new module from a file. */
-    void addSchemaFile(const char* filename);
+    void addSchemaFile(const std::filesystem::path& filename);
 
     /** @short Adds a new directory for schema lookup. */
-    void addSchemaDirectory(const char* directoryName);
+    void addSchemaDirectory(const std::filesystem::path& directory);
 
     /** @short Creates a new data node from a path (to be used with NETCONF edit-config) */
     [[nodiscard]] libyang::CreatedNodes dataNodeFromPath(const std::string& path, const std::optional<const std::string> value = std::nullopt) const;
